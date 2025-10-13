@@ -11,7 +11,6 @@ const LOAD_HISTORY = 'LOAD_HISTORY'
 const reducer = (prev, event) => {
     switch (event.name) {
         case ADD:
-            // Avoid duplicates
             if (prev.some(msg => msg.id === event.id)) {
                 return prev
             }
@@ -29,12 +28,11 @@ const Chat = ({ channelName }) => {
     const [isLoading, setIsLoading] = useState(true)
     const [error, setError] = useState(null)
     
-    // Use the channel hook
     const { channel } = useChannel(channelName, (message) => {
         dispatch(message);
     });
     
-    // Load message history from API
+    // Load message history
     useEffect(() => {
         const loadMessages = async () => {
             setIsLoading(true)
@@ -50,7 +48,6 @@ const Chat = ({ channelName }) => {
                 
                 const { messages: data } = await response.json()
 
-                // Transform API messages to match Ably format
                 const transformedMessages = data.map(msg => ({
                     id: msg.id,
                     name: ADD,
@@ -75,72 +72,22 @@ const Chat = ({ channelName }) => {
         loadMessages()
     }, [channelName])
     
-    // Set up presence in Supabase
+    // ABLY PRESENCE - handles enter/leave automatically
     useEffect(() => {
-        if (!user || !channelName) {
-            console.log('User or channel not ready for presence');
-            return;
-        }
-
-        const channelNameOnly = channelName.replace('chat:', '');
-
-        console.log('=== JOINING CHANNEL ===');
-        console.log('Channel:', channelNameOnly);
-        console.log('User:', user.id, user.username || user.firstName);
-
-        // Join the channel (mark as online)
-        const joinChannel = async () => {
-            try {
-                await fetch('/api/presence', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        channelName: channelNameOnly,
-                        action: 'join'
-                    }),
-                });
-                console.log('✅ Successfully joined channel');
-            } catch (error) {
-                console.error('Error joining channel:', error);
-            }
-        };
-
-        joinChannel();
-
-        // Send heartbeat every 30 seconds to keep presence alive
-        const heartbeatInterval = setInterval(async () => {
-            try {
-                await fetch('/api/presence', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        channelName: channelNameOnly,
-                        action: 'heartbeat'
-                    }),
-                });
-                console.log('💓 Heartbeat sent');
-            } catch (error) {
-                console.error('Error sending heartbeat:', error);
-            }
-        }, 30000); // Every 30 seconds
-
-        // Cleanup - leave channel when component unmounts
+        if (!channel || !user) return;
+        
+        // Enter presence with user data
+        channel.presence.enter({
+            username: user.username || user.firstName || 'Anonymous',
+            avatarUrl: user.imageUrl || '',
+        });
+        
+        // Leave on unmount or tab close
         return () => {
-            console.log('=== LEAVING CHANNEL ===');
-            clearInterval(heartbeatInterval);
-            
-            // Mark as offline
-            fetch(`/api/presence?channel=${channelNameOnly}`, {
-                method: 'DELETE',
-            }).then(() => {
-                console.log('✅ Left channel');
-            }).catch(error => {
-                console.error('Error leaving channel:', error);
-            });
+            channel.presence.leave();
         };
-    }, [user, channelName])
+    }, [channel, user]);
     
-    // Check if this is a read-only channel for non-mods
     const isReadOnly = channelName === 'chat:announcements' && !user?.publicMetadata?.isMod
     
     const publishMessage = useCallback(async (text) => {
@@ -149,7 +96,6 @@ const Chat = ({ channelName }) => {
         try {
             const channelNameOnly = channelName.replace('chat:', '')
             
-            // Save to database via API
             const response = await fetch('/api/messages', {
                 method: 'POST',
                 headers: {
@@ -168,7 +114,6 @@ const Chat = ({ channelName }) => {
 
             const { message: data } = await response.json()
 
-            // Create message object
             const messageObj = {
                 name: ADD,
                 id: data.id,
@@ -181,10 +126,7 @@ const Chat = ({ channelName }) => {
                 timestamp: Date.now(),
             }
 
-            // Add to local state immediately for instant feedback
             dispatch(messageObj)
-
-            // Publish to Ably for other users
             channel.publish(messageObj)
         } catch (err) {
             console.error('Error publishing message:', err)
