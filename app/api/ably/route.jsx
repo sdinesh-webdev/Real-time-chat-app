@@ -1,3 +1,4 @@
+// app/api/ably/route.jsx
 import { currentUser } from "@clerk/nextjs/server";
 import { SignJWT } from "jose";
 
@@ -22,7 +23,7 @@ const generateCapability = (userMetadata) => {
     if (userMetadata?.isMod) {
         return { '*': ['*'] }
     } else {
-        // Regular user capabilities
+        // Regular user capabilities - MUST include presence
         return {
             'chat:general': ['subscribe', 'publish', 'presence', 'history'],
             'chat:random': ['subscribe', 'publish', 'presence', 'history'],
@@ -39,14 +40,23 @@ export const GET = async () => {
             return new Response('Unauthorized', { status: 401 })
         }
 
+        console.log('=== GENERATING ABLY TOKEN ===');
+        console.log('User ID:', user.id);
+        console.log('Username:', user.username || user.firstName);
+        console.log('Is Mod:', user.publicMetadata?.isMod || false);
+
         const userMetadata = user.publicMetadata || {}
         const userCapability = generateCapability(userMetadata)
+        
+        console.log('Generated capability:', userCapability);
         
         const token = await createToken(
             user.id, 
             process.env.NEXT_PUBLIC_ABL_KEY, 
             userCapability
         )
+        
+        console.log('✅ Token generated successfully');
         
         // Return token as plain text for Ably
         return new Response(token, {
@@ -56,7 +66,7 @@ export const GET = async () => {
             },
         })
     } catch (error) {
-        console.error('Ably token generation error:', error)
+        console.error('❌ Ably token generation error:', error)
         return new Response('Internal Server Error', { status: 500 })
     }
 }

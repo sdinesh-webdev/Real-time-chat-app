@@ -75,20 +75,70 @@ const Chat = ({ channelName }) => {
         loadMessages()
     }, [channelName])
     
-    // Set up presence
+    // Set up presence in Supabase
     useEffect(() => {
-        if (!channel || !user) return
-
-        channel.presence.enter({
-            username: user.username || user.firstName || 'Anonymous',
-            avatarUrl: user.imageUrl || '',
-            userId: user.id,
-        })
-
-        return () => {
-            channel.presence.leave()
+        if (!user || !channelName) {
+            console.log('User or channel not ready for presence');
+            return;
         }
-    }, [channel, user, channelName])
+
+        const channelNameOnly = channelName.replace('chat:', '');
+
+        console.log('=== JOINING CHANNEL ===');
+        console.log('Channel:', channelNameOnly);
+        console.log('User:', user.id, user.username || user.firstName);
+
+        // Join the channel (mark as online)
+        const joinChannel = async () => {
+            try {
+                await fetch('/api/presence', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        channelName: channelNameOnly,
+                        action: 'join'
+                    }),
+                });
+                console.log('✅ Successfully joined channel');
+            } catch (error) {
+                console.error('Error joining channel:', error);
+            }
+        };
+
+        joinChannel();
+
+        // Send heartbeat every 30 seconds to keep presence alive
+        const heartbeatInterval = setInterval(async () => {
+            try {
+                await fetch('/api/presence', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        channelName: channelNameOnly,
+                        action: 'heartbeat'
+                    }),
+                });
+                console.log('💓 Heartbeat sent');
+            } catch (error) {
+                console.error('Error sending heartbeat:', error);
+            }
+        }, 30000); // Every 30 seconds
+
+        // Cleanup - leave channel when component unmounts
+        return () => {
+            console.log('=== LEAVING CHANNEL ===');
+            clearInterval(heartbeatInterval);
+            
+            // Mark as offline
+            fetch(`/api/presence?channel=${channelNameOnly}`, {
+                method: 'DELETE',
+            }).then(() => {
+                console.log('✅ Left channel');
+            }).catch(error => {
+                console.error('Error leaving channel:', error);
+            });
+        };
+    }, [user, channelName])
     
     // Check if this is a read-only channel for non-mods
     const isReadOnly = channelName === 'chat:announcements' && !user?.publicMetadata?.isMod
