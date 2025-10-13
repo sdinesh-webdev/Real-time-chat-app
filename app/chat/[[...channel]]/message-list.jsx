@@ -1,58 +1,147 @@
-// message-list.jsx
+// presence-list.jsx
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+import { useEffect, useState } from 'react';
+import { useChannel } from 'ably/react';
 
-const MessageList = ({ messages, currentUserId }) => {
-    if (!messages || messages.length === 0) {
-        return (
-            <div className="flex items-center justify-center h-full text-gray-500">
-                <p>No messages yet. Start the conversation!</p>
-            </div>
-        )
-    }
-
-    const createLi = (msg, index) => {
-        const isOwnMessage = msg.data?.userId === currentUserId
+const PresenceList = ({ channelName }) => {
+    const [members, setMembers] = useState([]);
+    
+    // Subscribe to Ably presence events for INSTANT updates
+    const { channel } = useChannel(channelName, () => {});
+    
+    useEffect(() => {
+        if (!channel) return;
         
-        return (
-            <li 
-                key={msg.id || index} 
-                className={`my-4 flex ${isOwnMessage ? 'justify-end' : 'justify-start'}`}
-            >
-                <div className={`flex items-start gap-3 max-w-[70%] ${
-                    isOwnMessage ? 'flex-row-reverse' : 'flex-row'
-                }`}>
-                    <Avatar className="flex-shrink-0">
-                        <AvatarImage src={msg.data?.avatarUrl} alt={msg.data?.username || 'User'} />
-                        <AvatarFallback>
-                            {msg.data?.username?.[0]?.toUpperCase() || 'U'}
-                        </AvatarFallback>
-                    </Avatar>
-                    <div className={`flex flex-col ${isOwnMessage ? 'items-end' : 'items-start'}`}>
-                        <div className={`flex items-center gap-2 mb-1 ${
-                            isOwnMessage ? 'flex-row-reverse' : 'flex-row'
-                        }`}>
-                            <span className="font-semibold text-sm text-gray-700">
-                                {isOwnMessage ? 'You' : msg.data?.username || 'Anonymous'}
-                            </span>
-                        </div>
-                        <div className={`rounded-2xl px-4 py-2 ${
-                            isOwnMessage 
-                                ? 'bg-blue-600 text-white rounded-tr-sm' 
-                                : 'bg-gray-200 text-gray-800 rounded-tl-sm'
-                        }`}>
-                            <p className="break-words">{msg.data?.text}</p>
-                        </div>
+        let mounted = true;
+        
+        // Subscribe FIRST before getting initial state
+        const presenceEnter = (member) => {
+            if (!mounted) return;
+            
+            setMembers(prev => {
+                if (prev.some(m => m.clientId === member.clientId)) {
+                    return prev;
+                }
+                
+                return [...prev, {
+                    clientId: member.clientId,
+                    username: member.data?.username || 'Unknown',
+                    avatarUrl: member.data?.avatarUrl || '',
+                    userId: member.clientId,
+                }];
+            });
+        };
+        
+        const presenceLeave = (member) => {
+            if (!mounted) return;
+            setMembers(prev => prev.filter(m => m.clientId !== member.clientId));
+        };
+        
+        const presenceUpdate = (member) => {
+            if (!mounted) return;
+            
+            setMembers(prev => {
+                const index = prev.findIndex(m => m.clientId === member.clientId);
+                if (index === -1) return prev;
+                
+                const updated = [...prev];
+                updated[index] = {
+                    clientId: member.clientId,
+                    username: member.data?.username || 'Unknown',
+                    avatarUrl: member.data?.avatarUrl || '',
+                    userId: member.clientId,
+                };
+                return updated;
+            });
+        };
+        
+        // Subscribe to all presence events
+        channel.presence.subscribe('enter', presenceEnter);
+        channel.presence.subscribe('leave', presenceLeave);
+        channel.presence.subscribe('update', presenceUpdate);
+        
+        // Now get initial presence state
+        channel.presence.get((err, members) => {
+            if (err) {
+                console.error('Error getting presence:', err);
+                return;
+            }
+            
+            if (!mounted) return;
+            
+            const memberList = members.map(member => ({
+                clientId: member.clientId,
+                username: member.data?.username || 'Unknown',
+                avatarUrl: member.data?.avatarUrl || '',
+                userId: member.clientId,
+            }));
+            
+            setMembers(memberList);
+        });
+        
+        return () => {
+            mounted = false;
+            channel.presence.unsubscribe('enter', presenceEnter);
+            channel.presence.unsubscribe('leave', presenceLeave);
+            channel.presence.unsubscribe('update', presenceUpdate);
+        };
+    }, [channel]);
+
+    return (
+        <div className="h-full flex flex-col">
+            <div className="flex items-center justify-between px-3 mb-4">
+                <h2 className="text-sm font-semibold text-gray-500">
+                    Online
+                </h2>
+                <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full font-medium">
+                    {members.length}
+                </span>
+            </div>
+            
+            {members.length === 0 ? (
+                <div className="flex-1 flex items-center justify-center">
+                    <div className="text-center text-gray-400 px-3">
+                        <div className="text-3xl mb-2">👋</div>
+                        <p className="text-sm">No one else is here</p>
+                        <p className="text-xs mt-1">Be the first to say hello!</p>
                     </div>
                 </div>
-            </li>
-        )
-    }
-    
-    return (
-        <ul className="space-y-1">
-            {messages.map(createLi)}
-        </ul>
-    )
-}
+            ) : (
+                <ul className="space-y-2 overflow-y-auto">
+                    {members.map((member, idx) => (
+                        <li 
+                            key={member.userId || idx} 
+                            className="flex items-center gap-3 px-3 py-2 hover:bg-gray-50 rounded-md transition-colors"
+                        >
+                            <div className="relative">
+                                <Avatar className="h-9 w-9">
+                                    <AvatarImage 
+                                        src={member.avatarUrl} 
+                                        alt={member.username} 
+                                    />
+                                    <AvatarFallback className="text-xs bg-blue-500 text-white">
+                                        {member.username[0]?.toUpperCase() || 'U'}
+                                    </AvatarFallback>
+                                </Avatar>
+                                <div 
+                                    className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white bg-green-500"
+                                    title="Online"
+                                />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-gray-900 truncate">
+                                    {member.username}
+                                </p>
+                                <p className="text-xs text-green-600 font-medium">
+                                    Online
+                                </p>
+                            </div>
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </div>
+    );
+};
 
-export default MessageList
+export default PresenceList;

@@ -37,7 +37,16 @@ export const GET = async (request) => {
 
     const supabase = getServiceRoleClient();
 
-    // Get online users for this channel
+    // Clean stale presence first (older than 1 minute)
+    const oneMinuteAgo = new Date(Date.now() - 60000).toISOString();
+    await supabase
+      .from("user_presence")
+      .update({ is_online: false })
+      .eq("channel_name", channelName)
+      .eq("is_online", true)
+      .lt("last_seen", oneMinuteAgo);
+
+    // Get online users
     const { data, error } = await supabase
       .from("user_presence")
       .select(
@@ -53,7 +62,8 @@ export const GET = async (request) => {
       `
       )
       .eq("channel_name", channelName)
-      .eq("is_online", true);
+      .eq("is_online", true)
+      .order("last_seen", { ascending: false });
 
     if (error) {
       console.error("Error fetching presence:", error);
@@ -63,16 +73,7 @@ export const GET = async (request) => {
       );
     }
 
-    // Filter out stale presence (last seen > 2 minutes ago)
-    const now = new Date();
-    const activeUsers = data.filter((presence) => {
-      const lastSeen = new Date(presence.last_seen);
-      const diffMs = now - lastSeen;
-      const diffMinutes = diffMs / 1000 / 60;
-      return diffMinutes < 2; // Consider online if seen in last 2 minutes
-    });
-
-    return NextResponse.json({ users: activeUsers });
+    return NextResponse.json({ users: data || [] });
   } catch (error) {
     console.error("Presence GET error:", error);
     return NextResponse.json(
@@ -92,7 +93,7 @@ export const POST = async (request) => {
     }
 
     const body = await request.json();
-    const { channelName, action } = body; // action: 'join' or 'heartbeat'
+    const { channelName, action } = body;
 
     if (!channelName) {
       return NextResponse.json(
@@ -103,7 +104,7 @@ export const POST = async (request) => {
 
     const supabase = getServiceRoleClient();
 
-    // Upsert presence (insert or update)
+    // Upsert presence
     const { error } = await supabase.from("user_presence").upsert(
       {
         user_id: user.id,
@@ -123,6 +124,10 @@ export const POST = async (request) => {
         { status: 500 }
       );
     }
+
+    console.log(
+      `✅ Presence updated: ${user.username || user.firstName} (${action})`
+    );
 
     return NextResponse.json({ success: true });
   } catch (error) {
@@ -155,7 +160,7 @@ export const DELETE = async (request) => {
 
     const supabase = getServiceRoleClient();
 
-    // Mark user as offline
+    // Mark as offline
     const { error } = await supabase
       .from("user_presence")
       .update({
@@ -172,6 +177,8 @@ export const DELETE = async (request) => {
         { status: 500 }
       );
     }
+
+    console.log(`🚪 User left: ${user.username || user.firstName}`);
 
     return NextResponse.json({ success: true });
   } catch (error) {
