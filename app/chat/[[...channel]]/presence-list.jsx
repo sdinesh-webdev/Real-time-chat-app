@@ -1,91 +1,78 @@
-// presence-list.jsx
+// presence-list.jsx - SUPABASE REALTIME
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { useEffect, useState } from 'react';
-import { useChannel } from 'ably/react';
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+);
 
 const PresenceList = ({ channelName }) => {
     const [members, setMembers] = useState([]);
     
-    // Subscribe to Ably presence events for INSTANT updates
-    const { channel } = useChannel(channelName, () => {});
-    
     useEffect(() => {
-        if (!channel) return;
+        const channelNameOnly = channelName.replace('chat:', '');
+        let presenceChannel;
         
-        let mounted = true;
-        
-        // Subscribe FIRST before getting initial state
-        const presenceEnter = (member) => {
-            if (!mounted) return;
+        const setupPresence = async () => {
+            // Initial fetch
+            await fetchOnlineUsers(channelNameOnly);
             
-            setMembers(prev => {
-                if (prev.some(m => m.clientId === member.clientId)) {
-                    return prev;
+            // Subscribe to realtime changes
+            presenceChannel = supabase
+                .channel(`presence:${channelNameOnly}`)
+                .on(
+                    'postgres_changes',
+                    {
+                        event: '*',
+                        schema: 'public',
+                        table: 'user_presence',
+                        filter: `channel_name=eq.${channelNameOnly}`
+                    },
+                    async (payload) => {
+                        console.log('Presence change:', payload);
+                        // Refetch on any change
+                        await fetchOnlineUsers(channelNameOnly);
+                    }
+                )
+                .subscribe((status) => {
+                    console.log('Presence subscription status:', status);
+                });
+        };
+        
+        const fetchOnlineUsers = async (channel) => {
+            try {
+                const response = await fetch(`/api/presence?channel=${channel}`);
+                
+                if (!response.ok) {
+                    throw new Error('Failed to fetch presence');
                 }
                 
-                return [...prev, {
-                    clientId: member.clientId,
-                    username: member.data?.username || 'Unknown',
-                    avatarUrl: member.data?.avatarUrl || '',
-                    userId: member.clientId,
-                }];
-            });
-        };
-        
-        const presenceLeave = (member) => {
-            if (!mounted) return;
-            setMembers(prev => prev.filter(m => m.clientId !== member.clientId));
-        };
-        
-        const presenceUpdate = (member) => {
-            if (!mounted) return;
-            
-            setMembers(prev => {
-                const index = prev.findIndex(m => m.clientId === member.clientId);
-                if (index === -1) return prev;
+                const { users } = await response.json();
                 
-                const updated = [...prev];
-                updated[index] = {
-                    clientId: member.clientId,
-                    username: member.data?.username || 'Unknown',
-                    avatarUrl: member.data?.avatarUrl || '',
-                    userId: member.clientId,
-                };
-                return updated;
-            });
-        };
-        
-        // Subscribe to all presence events
-        channel.presence.subscribe('enter', presenceEnter);
-        channel.presence.subscribe('leave', presenceLeave);
-        channel.presence.subscribe('update', presenceUpdate);
-        
-        // Now get initial presence state
-        channel.presence.get((err, members) => {
-            if (err) {
-                console.error('Error getting presence:', err);
-                return;
+                const memberList = users.map(presence => ({
+                    clientId: presence.user_id,
+                    username: presence.user.username,
+                    avatarUrl: presence.user.avatar_url,
+                    userId: presence.user.id,
+                }));
+                
+                setMembers(memberList);
+            } catch (error) {
+                console.error('Error fetching online users:', error);
             }
-            
-            if (!mounted) return;
-            
-            const memberList = members.map(member => ({
-                clientId: member.clientId,
-                username: member.data?.username || 'Unknown',
-                avatarUrl: member.data?.avatarUrl || '',
-                userId: member.clientId,
-            }));
-            
-            setMembers(memberList);
-        });
-        
-        return () => {
-            mounted = false;
-            channel.presence.unsubscribe('enter', presenceEnter);
-            channel.presence.unsubscribe('leave', presenceLeave);
-            channel.presence.unsubscribe('update', presenceUpdate);
         };
-    }, [channel]);
+        
+        setupPresence();
+        
+        // Cleanup
+        return () => {
+            if (presenceChannel) {
+                supabase.removeChannel(presenceChannel);
+            }
+        };
+    }, [channelName]);
 
     return (
         <div className="h-full flex flex-col">
