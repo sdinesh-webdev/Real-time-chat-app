@@ -20,7 +20,7 @@ const Page = ({ params }) => {
         { path: '/chat/random', label: '# Random' },
     ]
     
-    // Create Ably client with useMemo (MUST be before any conditional returns)
+    // Create Ably client with proper presence config
     const client = useMemo(() => {
         if (!user?.id) return null
         
@@ -28,11 +28,15 @@ const Page = ({ params }) => {
             authUrl: '/api/ably',
             clientId: user.id,
             autoConnect: true,
-            echoMessages: true, // Changed to true so you can see your own messages
+            echoMessages: false, // Don't echo own messages back
+            // CRITICAL: Enable presence
+            transportParams: {
+                heartbeatInterval: 15000, // 15s heartbeat
+            },
         })
     }, [user?.id])
     
-    // Sync user with Supabase when they load the page
+    // Sync user with Supabase
     useEffect(() => {
         const syncUser = async () => {
             if (!user) return
@@ -55,7 +59,29 @@ const Page = ({ params }) => {
         syncUser()
     }, [user])
     
-    // Show loading state while user data is loading or syncing
+    // Monitor Ably connection state
+    useEffect(() => {
+        if (!client) return;
+        
+        const handleStateChange = (stateChange) => {
+            console.log('Ably connection:', stateChange.current);
+            
+            if (stateChange.current === 'failed') {
+                console.error('Ably connection failed');
+            }
+        };
+        
+        client.connection.on('connected', () => {
+            console.log('✅ Ably connected');
+        });
+        
+        client.connection.on(handleStateChange);
+        
+        return () => {
+            client.connection.off(handleStateChange);
+        };
+    }, [client]);
+    
     if (!isLoaded || !isSynced) {
         return (
             <div className="flex items-center justify-center h-[calc(100vh-72.8px)]">
@@ -67,7 +93,6 @@ const Page = ({ params }) => {
         )
     }
     
-    // Redirect to sign in if not authenticated
     if (!user || !client) {
         return (
             <div className="flex items-center justify-center h-[calc(100vh-72.8px)]">

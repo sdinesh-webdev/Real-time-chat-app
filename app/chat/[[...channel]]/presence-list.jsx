@@ -12,27 +12,13 @@ const PresenceList = ({ channelName }) => {
     useEffect(() => {
         if (!channel) return;
         
-        // Get initial presence
-        channel.presence.get((err, members) => {
-            if (err) {
-                console.error('Error getting presence:', err);
-                return;
-            }
-            
-            const memberList = members.map(member => ({
-                clientId: member.clientId,
-                username: member.data?.username || 'Unknown',
-                avatarUrl: member.data?.avatarUrl || '',
-                userId: member.clientId,
-            }));
-            
-            setMembers(memberList);
-        });
+        let mounted = true;
         
-        // Listen to presence changes (enter/leave) - INSTANT UPDATES
+        // Subscribe FIRST before getting initial state
         const presenceEnter = (member) => {
+            if (!mounted) return;
+            
             setMembers(prev => {
-                // Avoid duplicates
                 if (prev.some(m => m.clientId === member.clientId)) {
                     return prev;
                 }
@@ -47,15 +33,57 @@ const PresenceList = ({ channelName }) => {
         };
         
         const presenceLeave = (member) => {
+            if (!mounted) return;
             setMembers(prev => prev.filter(m => m.clientId !== member.clientId));
         };
         
+        const presenceUpdate = (member) => {
+            if (!mounted) return;
+            
+            setMembers(prev => {
+                const index = prev.findIndex(m => m.clientId === member.clientId);
+                if (index === -1) return prev;
+                
+                const updated = [...prev];
+                updated[index] = {
+                    clientId: member.clientId,
+                    username: member.data?.username || 'Unknown',
+                    avatarUrl: member.data?.avatarUrl || '',
+                    userId: member.clientId,
+                };
+                return updated;
+            });
+        };
+        
+        // Subscribe to all presence events
         channel.presence.subscribe('enter', presenceEnter);
         channel.presence.subscribe('leave', presenceLeave);
+        channel.presence.subscribe('update', presenceUpdate);
+        
+        // Now get initial presence state
+        channel.presence.get((err, members) => {
+            if (err) {
+                console.error('Error getting presence:', err);
+                return;
+            }
+            
+            if (!mounted) return;
+            
+            const memberList = members.map(member => ({
+                clientId: member.clientId,
+                username: member.data?.username || 'Unknown',
+                avatarUrl: member.data?.avatarUrl || '',
+                userId: member.clientId,
+            }));
+            
+            setMembers(memberList);
+        });
         
         return () => {
+            mounted = false;
             channel.presence.unsubscribe('enter', presenceEnter);
             channel.presence.unsubscribe('leave', presenceLeave);
+            channel.presence.unsubscribe('update', presenceUpdate);
         };
     }, [channel]);
 

@@ -72,19 +72,51 @@ const Chat = ({ channelName }) => {
         loadMessages()
     }, [channelName])
     
-    // ABLY PRESENCE - handles enter/leave automatically
+    // ABLY PRESENCE - enter immediately when channel is ready
     useEffect(() => {
         if (!channel || !user) return;
         
-        // Enter presence with user data
-        channel.presence.enter({
-            username: user.username || user.firstName || 'Anonymous',
-            avatarUrl: user.imageUrl || '',
-        });
+        let isActive = true;
         
-        // Leave on unmount or tab close
+        // Enter presence immediately
+        const enterPresence = async () => {
+            try {
+                await channel.presence.enter({
+                    username: user.username || user.firstName || 'Anonymous',
+                    avatarUrl: user.imageUrl || '',
+                });
+                console.log('✅ Entered presence:', user.username || user.firstName);
+            } catch (err) {
+                console.error('Error entering presence:', err);
+            }
+        };
+        
+        enterPresence();
+        
+        // Handle page visibility changes (tab switching)
+        const handleVisibilityChange = () => {
+            if (!isActive) return;
+            
+            if (document.hidden) {
+                // Don't leave immediately - user might be switching tabs
+                return;
+            } else {
+                // Re-enter if we were away
+                channel.presence.enter({
+                    username: user.username || user.firstName || 'Anonymous',
+                    avatarUrl: user.imageUrl || '',
+                });
+            }
+        };
+        
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        
+        // Cleanup
         return () => {
+            isActive = false;
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
             channel.presence.leave();
+            console.log('🚪 Left presence');
         };
     }, [channel, user]);
     
